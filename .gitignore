@@ -1,0 +1,18 @@
+# Python virtual environment
+.venv/
+__pycache__/
+*.py[cod]
+
+# ESP-IDF build output
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+
+# macOS
+.DS_Store
+
+# Local Matter QR codes & credentials
+matter_qr_code.png
+*qr_code*.png
