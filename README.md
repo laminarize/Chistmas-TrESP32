@@ -9,7 +9,38 @@ Built using **ESP-IDF** and the official **`esp-matter`** SDK on an **ESP32-S3**
 
 ---
 
-## 1. Hardware Bill of Materials (BOM)
+## 1. Hardware Options: Custom Rev C PCB vs. Breakout Modules
+
+You can build this controller either using our **turnkey single-board custom PCB (`hardware/`, Rev C)** or on a breadboard/enclosure using off-the-shelf breakout modules.
+
+### Option 1: Custom Single-Board Controller PCB (`hardware/`, Rev C — Recommended)
+
+The [`hardware/`](hardware/) directory contains a complete KiCad 9/10 hardware design and ready-to-order **JLCPCB** and **PCBWay** fabrication + turnkey PCBA files (`80 × 60 mm`, 2-layer, `1 oz` copper, minimum drill `0.30 mm`):
+
+- **Integrated Single-Plug Power & Logic:** Steps down the `29V DC` tree power brick via a TI **`LMR51430XDDCR`** (`36V, 3A` synchronous buck $\to 5.21\text{ V}$) and low-dropout `3.3V, 1A` regulator (`U3`: `AP7361C-33E-13` / `MCP1826S-3302E/DB`) to power an onboard **`ESP32-S3-WROOM-1-N8`** (`U1`) and TI **`DRV8871DDA`** H-bridge (`U4`, `R9 = 36 kΩ` $\to 1.78\text{ A}$ current limit, solid-poured thermal pad with tented vias).
+- **Full Input & Host Computer USB Protection:**
+  - **Zero-Drop Reverse-Polarity & Surge Protection:** **`AOD4185`** `40V` P-MOSFET (`Q1`) + `12V` gate Zener (`D5`) + **`SMAJ30A`** TVS clamp (`D4`), paired with the `29V 2A` Class 2 power supply's built-in hiccup OCP and `DRV8871`'s `1.78A` active cycle-by-cycle current limit.
+  - **Computer-Safe Dual-Supply OR-ing (`D1`, `D3`) & USB ESD (`U5`):** Automotive-qualified (`AEC-Q101`) Nexperia **`PMEG4010CEH,115`** low-leakage `40V, 1A` MEGA Schottky diodes in flat-lead `SOD-123F` isolate `USB-C VBUS` (`J3`, protected by `USBLC6-2SC6`) from `+5V_BUCK` so plugging in a laptop while `29V DC` is live can never back-feed `VBUS`.
+- **Flexible Tree Wiring & Onboard Diagnostics:**
+  - **`J1` (`29V_DC_IN`):** `5.08 mm` Phoenix Contact (`1729128`) screw terminal for the `29V 2A` power brick.
+  - **`J2` (`TREE_29V_OUT`) + `TP1`/`TP2`:** Connect the 2-wire tree cable either via the `5.08 mm` screw terminal (`J2`) or directly to the `4 × 4 mm` (`2.0 mm` plated hole) strain-relief solder pads (`TP1`/`TP2`).
+  - **Onboard Controls, LEDs & Probe Pads:** `SW1` (`RESET`), `SW2` (`BOOT` / `GPIO 0`), `D2` (`3.3V` red power LED), `D6` (`GPIO 38` green Matter status LED), and `1.5 mm` SMD diagnostic probe pads `TP3` (`+29V`), `TP4` (`+5V`), `TP5` (`+3V3`), and `TP6` (`GND`).
+- **Ordering Files (`hardware/`):**
+  - **Bare PCB Fabrication (JLCPCB or PCBWay):** Upload [`hardware/gerbers.zip`](hardware/gerbers.zip).
+  - **JLCPCB Turnkey PCBA:** Upload [`hardware/jlcpcb_bom.csv`](hardware/jlcpcb_bom.csv) (`42` populated parts across `28` verified in-stock LCSC `Cxxxxxx` lines, with `11` Basic/Preferred lines for free feeder setup) and [`hardware/jlcpcb_positions.csv`](hardware/jlcpcb_positions.csv) (`42` CPL placements with EasyEDA pad/polarity rotation & midpoint offsets).
+  - **PCBWay Turnkey PCBA:** Upload [`hardware/bom.csv`](hardware/bom.csv) (`42` populated parts across `29` unique MPN lines) and [`hardware/positions.csv`](hardware/positions.csv) (`42` native KiCad IPC-7351B placements).
+
+| Custom Rev C PCB Signal | ESP32-S3 Pin | Connected Hardware |
+| :--- | :--- | :--- |
+| **`TREE_IN1` (Warm White PWM)** | `GPIO 5` (`U1` Pin 5) | `DRV8871DDA` `IN1` (`25 kHz` PWM + `100 kΩ` pull-down `R7`) |
+| **`TREE_IN2` (RGB Multicolor PWM)** | `GPIO 6` (`U1` Pin 6) | `DRV8871DDA` `IN2` (`25 kHz` PWM + `100 kΩ` pull-down `R8`) |
+| **`BOOT` / Factory Reset Button** | `GPIO 0` (`U1` Pin 27) | `SW2` (`3 s` hold triggers Matter factory reset) |
+| **`STATUS` LED (Matter State)** | `GPIO 38` (`U1` Pin 31) | `R11` (`1 kΩ`) + `D6` (`570 nm` green `0603` LED) |
+| **Native USB-C Flash / Logs** | `GPIO 19` (`D-`), `GPIO 20` (`D+`) | `J3` (`USB4105-GF-A`) via `U5` (`USBLC6-2SC6`) |
+
+---
+
+### Option 2: Off-the-Shelf Breakout Bill of Materials (BOM)
 
 | Component | Recommendation | Estimated Cost | Notes |
 | :--- | :--- | :--- | :--- |
@@ -166,9 +197,14 @@ Additional `./flash.sh` commands:
 4. Scan the generated QR code or enter the 11-digit manual pairing code displayed in your serial console.
 5. If prompted about an **Uncertified Accessory**, tap **Add Anyway**.
 
-### Resetting / Re-Entering Pairing Mode
+### Resetting, Pairing & `STATUS` LED (`GPIO 38`) States
+- **Onboard `STATUS` LED (`GPIO 38` / Rev C `D6`):**
+  - **`1 Hz` Blink (`500 ms` ON / `500 ms` OFF):** Uncommissioned or Matter commissioning window open (ready to pair over BLE).
+  - **`2.5 Hz` Blink (`200 ms` ON / `200 ms` OFF):** Matter `Identify` command active from SmartThings / Matter controller.
+  - **`5 Hz` Rapid Blink (`100 ms` ON / `100 ms` OFF):** `BOOT` button (`GPIO 0`) is currently held down during the 3-second factory-reset countdown.
+  - **Solid ON:** Commissioned onto a Matter fabric and operating normally.
 - **Automatic Reset on Delete:** Whenever you delete the device from the SmartThings app while it is online, the firmware intercepts `DeviceEventType::kFabricRemoved` and automatically runs `esp_matter::factory_reset()`, wiping all fabrics and immediately restarting BLE pairing advertisements.
-- **Physical `BOOT` Button Reset (3-Second Hold):** Hold down the **`BOOT`** button (`GPIO 0`) on the ESP32-S3 for **3 seconds** at any time to trigger a Matter factory reset and reopen BLE pairing mode without needing a computer.
+- **Physical `BOOT` Button Reset (3-Second Hold):** Hold down the **`BOOT`** button (`GPIO 0` / `SW2`) on the ESP32-S3 for **3 seconds** at any time to trigger a Matter factory reset and reopen BLE pairing mode without needing a computer.
 - **USB Erase:** Run `./flash.sh erase && ./flash.sh flash` over USB.
 
 > [!TIP]

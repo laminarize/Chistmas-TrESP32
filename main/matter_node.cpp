@@ -3,8 +3,10 @@
 
 #include <esp_err.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <nvs_flash.h>
 #include <nvs.h>
+#include <atomic>
 #include <math.h>
 #include <string.h>
 
@@ -303,6 +305,9 @@ static esp_err_t app_attribute_update_cb(
     return ESP_OK;
 }
 
+static std::atomic<bool> s_identifying{false};
+static std::atomic<int64_t> s_identify_effect_until_us{0};
+
 static esp_err_t app_identification_cb(
     identification::callback_type_t type,
     uint16_t endpoint_id,
@@ -310,8 +315,25 @@ static esp_err_t app_identification_cb(
     uint8_t effect_variant,
     void *priv_data)
 {
-    ESP_LOGI(TAG, "Identification callback called for endpoint: %d", endpoint_id);
+    ESP_LOGI(TAG, "Identification callback (type=%d, effect=%u) for endpoint: %u",
+             (int)type, effect_id, endpoint_id);
+    if (type == identification::callback_type_t::START) {
+        s_identifying.store(true, std::memory_order_relaxed);
+    } else if (type == identification::callback_type_t::STOP) {
+        s_identifying.store(false, std::memory_order_relaxed);
+    } else if (type == identification::callback_type_t::EFFECT) {
+        s_identify_effect_until_us.store(esp_timer_get_time() + 3000000LL, std::memory_order_relaxed);
+    }
     return ESP_OK;
+}
+
+bool matter_node_is_identifying(void)
+{
+    if (s_identifying.load(std::memory_order_relaxed)) {
+        return true;
+    }
+    int64_t until_us = s_identify_effect_until_us.load(std::memory_order_relaxed);
+    return (until_us > 0) && (esp_timer_get_time() < until_us);
 }
 
 esp_err_t matter_node_init(void)

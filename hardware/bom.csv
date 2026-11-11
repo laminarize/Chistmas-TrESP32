@@ -1,0 +1,30 @@
+Reference,Qty,Value,Footprint,Manufacturer,MPN,Description
+"C1, C11",2,47uF_50V,Capacitor_SMD:CP_Elec_6.3x7.7,Panasonic,EEE-FK1H470P,Polarized capacitor
+C2,1,10uF_50V,Capacitor_SMD:C_1210_3225Metric,Murata,GRM32ER71H106KA12L,Unpolarized capacitor
+"C3, C9, C12",3,100nF_50V,Capacitor_SMD:C_0603_1608Metric,Yageo,CC0603KRX7R9BB104,Unpolarized capacitor
+"C4, C5, C13",3,22uF_25V,Capacitor_SMD:C_0805_2012Metric,Samsung Electro-Mechanics,CL21A226MAQNNNE,Unpolarized capacitor
+"C6, C10",2,10uF_16V,Capacitor_SMD:C_0805_2012Metric,Samsung Electro-Mechanics,CL21B106KOQNNNE,Unpolarized capacitor
+C7,1,100nF_16V,Capacitor_SMD:C_0603_1608Metric,Yageo,CC0603KRX7R7BB104,Unpolarized capacitor
+C8,1,1uF_16V,Capacitor_SMD:C_0603_1608Metric,Samsung Electro-Mechanics,CL10B105KO8NNNC,Unpolarized capacitor
+"D1, D3",2,PMEG4010CEH,Diode_SMD:D_SOD-123F,Nexperia,"PMEG4010CEH,115","40V 1A Low-Leakage MEGA Schottky Barrier Rectifier, AEC-Q101, SOD-123F"
+D2,1,RED_LED,LED_SMD:LED_0603_1608Metric,Wurth Elektronik,150060RS75000,Light emitting diode
+D4,1,SMAJ30A,Diode_SMD:D_SMA,Littelfuse,SMAJ30A,Zener diode
+D5,1,BZT52C12,Diode_SMD:D_SOD-123,Diodes Incorporated,BZT52C12-7-F,Zener diode
+D6,1,GREEN_LED,LED_SMD:LED_0603_1608Metric,Wurth Elektronik,150060VS75000,"Light emitting diode, Green 570nm, 0603"
+"J1, J2",2,29V_DC_IN / TREE_29V_OUT,"TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal",Phoenix Contact,1729128,"Generic screw terminal, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)"
+J3,1,USB_C,Connector_USB:USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal,GCT,USB4105-GF-A,USB 2.0-only 16P Type-C Receptacle connector
+L1,1,6.8uH,Inductor_SMD:L_Bourns_SRN6045TA,Bourns,SRN6045TA-6R8M,Inductor
+Q1,1,AOD4185,Package_TO_SOT_SMD:TO-252-2,Alpha & Omega Semiconductor,AOD4185,"P-MOSFET transistor, gate/drain/source"
+R1,1,76.8k,Resistor_SMD:R_0603_1608Metric,Yageo,RC0603FR-0776K8L,Resistor
+"R2, R4",2,10k,Resistor_SMD:R_0603_1608Metric,Yageo,RC0603FR-0710KL,Resistor
+"R3, R11",2,1k,Resistor_SMD:R_0603_1608Metric,Yageo,RC0603FR-071KL,Resistor
+"R5, R6",2,5.1k,Resistor_SMD:R_0603_1608Metric,Yageo,RC0603FR-075K1L,Resistor
+"R7, R8",2,100k,Resistor_SMD:R_0603_1608Metric,Yageo,RC0603FR-07100KL,Resistor
+R9,1,36k,Resistor_SMD:R_0603_1608Metric,Yageo,RC0603FR-0736KL,Resistor
+R10,1,47k,Resistor_SMD:R_0603_1608Metric,Yageo,RC0603FR-0747KL,Resistor
+"SW1, SW2",2,RESET / BOOT,Button_Switch_SMD:SW_SPST_B3U-1000P-B,Omron,B3U-1000P-B,"Push button switch, generic, two pins"
+U1,1,ESP32-S3-WROOM-1-N8,Project_Footprints:ESP32-S3-WROOM-1_0.3mmVias,Espressif Systems,ESP32-S3-WROOM-1-N8,"RF Module, ESP32-S3 SoC, Wi-Fi 802.11b/g/n, Bluetooth, BLE, 32-bit, 3.3V, onboard antenna, SMD"
+U2,1,LMR51430XDDCR,Package_TO_SOT_SMD:SOT-23-6,Texas Instruments,LMR51430XDDCR,"4.5-V to 36-V, 3-A synchronous buck converter with 40-µA IQ, SOT-23-6"
+U3,1,AP7361C-33E,Package_TO_SOT_SMD:SOT-223-3_TabPin2,Diodes Incorporated,AP7361C-33E-13,"1A Low Dropout regulator, positive, 3.3V fixed output, SOT-223"
+U4,1,DRV8871DDA,Project_Footprints:DRV8871DDA_HTSOP-8-1EP_TentedWindowed,Texas Instruments,DRV8871DDAR,"Brushed DC Motor Driver, PWM Control, 45V, 3.6A, Current limiting, HTSOP-8"
+U5,1,USBLC6-2SC6,Package_TO_SOT_SMD:SOT-23-6,STMicroelectronics,USBLC6-2SC6,"Very low capacitance ESD protection diode, 2 data-line, SOT-23-6"

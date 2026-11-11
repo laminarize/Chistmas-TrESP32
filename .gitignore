@@ -1,7 +1,18 @@
-# Python virtual environment
+# Virtual environments (Python & Node.js)
 .venv/
+venv/
+env/
+ENV/
 __pycache__/
 *.py[cod]
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env
+.env.*
+!.env.example
+
 
 # ESP-IDF build output
 build/
@@ -16,3 +27,17 @@ managed_components/
 # Local Matter QR codes & credentials
 matter_qr_code.png
 *qr_code*.png
+
+# KiCad CAD & Temporary Files
+*.kicad_prl
+*-backups/
+.mcp-backups/
+*.kicad_pcb-bak
+*.kicad_sch-bak
+*.bak
+_autosave-*
+*.lck
+fp-info-cache
+*.net
+*.drc
+

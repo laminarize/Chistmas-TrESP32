@@ -27,6 +27,11 @@ esp_err_t matter_node_init(void);
  */
 void matter_node_sync_after_start(void);
 
+/**
+ * @brief Return true while Matter Identify is active on the node/endpoint.
+ */
+bool matter_node_is_identifying(void);
+
 #ifdef __cplusplus
 }
 #endif
