@@ -2,6 +2,8 @@
 #include "driver/ledc.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "tree_driver";
 
@@ -10,16 +12,44 @@ static const char *TAG = "tree_driver";
 #define LEDC_CH_IN1          LEDC_CHANNEL_0
 #define LEDC_CH_IN2          LEDC_CHANNEL_1
 
-static volatile uint32_t s_duty_a = 0;
-static volatile uint32_t s_duty_b = 0;
-static volatile uint32_t s_applied_a = 0xFFFFFFFF;
-static volatile uint32_t s_applied_b = 0xFFFFFFFF;
-static volatile bool s_timer_running = false;
-static volatile uint8_t s_phase = 0;
+static uint32_t s_duty_a = 0;
+static uint32_t s_duty_b = 0;
+static uint32_t s_applied_a = 0xFFFFFFFF;
+static uint32_t s_applied_b = 0xFFFFFFFF;
+static bool s_timer_running = false;
+static uint8_t s_phase = 0;
 static esp_timer_handle_t s_toggle_timer = NULL;
+static SemaphoreHandle_t s_driver_mutex = NULL;
 
-static void apply_channel_duties(uint32_t in1_duty, uint32_t in2_duty)
+static inline uint32_t clamp_driver_duty(uint32_t duty)
 {
+    if (duty == 0) {
+        return 0;
+    }
+    if (duty < TREE_PWM_MIN_ACTIVE_DUTY) {
+        return TREE_PWM_MIN_ACTIVE_DUTY;
+    }
+    if (duty > TREE_PWM_MAX_DUTY) {
+        return TREE_PWM_MAX_DUTY;
+    }
+    return duty;
+}
+
+static void apply_channel_duties_locked(uint32_t in1_duty, uint32_t in2_duty)
+{
+    // Turn off any deactivating channel first so DRV8871 transitions cleanly
+    // through coast (IN1=0, IN2=0) rather than momentary brake (IN1=1, IN2=1).
+    if (in1_duty == 0 && s_applied_a != 0) {
+        ledc_set_duty(LEDC_SPEED, LEDC_CH_IN1, 0);
+        ledc_update_duty(LEDC_SPEED, LEDC_CH_IN1);
+        s_applied_a = 0;
+    }
+    if (in2_duty == 0 && s_applied_b != 0) {
+        ledc_set_duty(LEDC_SPEED, LEDC_CH_IN2, 0);
+        ledc_update_duty(LEDC_SPEED, LEDC_CH_IN2);
+        s_applied_b = 0;
+    }
+
     if (s_applied_a != in1_duty) {
         ledc_set_duty(LEDC_SPEED, LEDC_CH_IN1, in1_duty);
         ledc_update_duty(LEDC_SPEED, LEDC_CH_IN1);
@@ -34,37 +64,44 @@ static void apply_channel_duties(uint32_t in1_duty, uint32_t in2_duty)
 
 static void alternating_timer_cb(void *arg)
 {
+    if (s_driver_mutex == NULL || xSemaphoreTake(s_driver_mutex, portMAX_DELAY) != pdTRUE) {
+        return;
+    }
+
     uint32_t a = s_duty_a;
     uint32_t b = s_duty_b;
 
     if (a == 0 && b == 0) {
-        apply_channel_duties(0, 0);
-        return;
-    }
-
-    if (a > 0 && b == 0) {
-        apply_channel_duties(a, 0);
-        return;
-    }
-
-    if (a == 0 && b > 0) {
-        apply_channel_duties(0, b);
-        return;
-    }
-
-    // Both colors active: alternate at 200 Hz (2.5 ms per phase)
-    if (s_phase == 0) {
-        apply_channel_duties(a, 0);
-        s_phase = 1;
+        apply_channel_duties_locked(0, 0);
+    } else if (a > 0 && b == 0) {
+        apply_channel_duties_locked(a, 0);
+    } else if (a == 0 && b > 0) {
+        apply_channel_duties_locked(0, b);
     } else {
-        apply_channel_duties(0, b);
-        s_phase = 0;
+        // Both colors active: alternate at 200 Hz (2.5 ms per phase)
+        if (s_phase == 0) {
+            apply_channel_duties_locked(a, 0);
+            s_phase = 1;
+        } else {
+            apply_channel_duties_locked(0, b);
+            s_phase = 0;
+        }
     }
+
+    xSemaphoreGive(s_driver_mutex);
 }
 
 esp_err_t tree_driver_init(gpio_num_t pin_in1, gpio_num_t pin_in2)
 {
     ESP_LOGI(TAG, "Initializing DRV8871 LEDC driver on IN1: GPIO %d, IN2: GPIO %d", pin_in1, pin_in2);
+
+    if (s_driver_mutex == NULL) {
+        s_driver_mutex = xSemaphoreCreateMutex();
+        if (s_driver_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create driver mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
 
     // 1. Configure LEDC Timer
     ledc_timer_config_t timer_conf = {
@@ -100,6 +137,8 @@ esp_err_t tree_driver_init(gpio_num_t pin_in1, gpio_num_t pin_in2)
     };
     ESP_ERROR_CHECK(ledc_channel_config(&ch1_conf));
 
+    tree_driver_all_off();
+
     // 4. Create high-resolution timer for alternating polarity (2.5 ms interval = 400 Hz toggle)
     const esp_timer_create_args_t timer_args = {
         .callback = &alternating_timer_cb,
@@ -110,22 +149,27 @@ esp_err_t tree_driver_init(gpio_num_t pin_in1, gpio_num_t pin_in2)
     ESP_ERROR_CHECK(esp_timer_start_periodic(s_toggle_timer, 2500)); // 2500 µs = 2.5 ms
     s_timer_running = true;
 
-    tree_driver_all_off();
     return ESP_OK;
 }
 
 void tree_driver_set_duties(uint32_t duty_a, uint32_t duty_b)
 {
-    if (duty_a > TREE_PWM_MAX_DUTY) duty_a = TREE_PWM_MAX_DUTY;
-    if (duty_b > TREE_PWM_MAX_DUTY) duty_b = TREE_PWM_MAX_DUTY;
+    duty_a = clamp_driver_duty(duty_a);
+    duty_b = clamp_driver_duty(duty_b);
 
-    s_duty_a = duty_a;
-    s_duty_b = duty_b;
+    if (s_driver_mutex != NULL && xSemaphoreTake(s_driver_mutex, portMAX_DELAY) == pdTRUE) {
+        s_duty_a = duty_a;
+        s_duty_b = duty_b;
+        xSemaphoreGive(s_driver_mutex);
+    }
 }
 
 void tree_driver_all_off(void)
 {
-    s_duty_a = 0;
-    s_duty_b = 0;
-    apply_channel_duties(0, 0);
+    if (s_driver_mutex != NULL && xSemaphoreTake(s_driver_mutex, portMAX_DELAY) == pdTRUE) {
+        s_duty_a = 0;
+        s_duty_b = 0;
+        apply_channel_duties_locked(0, 0);
+        xSemaphoreGive(s_driver_mutex);
+    }
 }

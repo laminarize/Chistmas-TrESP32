@@ -43,6 +43,7 @@ static const char *TAG = "matter_node";
 #define CT_MIRED_STEADY_THRESHOLD 435
 
 static uint16_t s_light_endpoint_id = 1;
+static std::atomic<bool> s_syncing_attributes{false};
 
 /**
  * Custom DeviceInstanceInfoProvider that overrides Manufacturer (VendorName)
@@ -266,7 +267,8 @@ static esp_err_t app_attribute_update_cb(
     esp_matter_attr_val_t *val,
     void *priv_data)
 {
-    if (type != attribute::callback_type_t::POST_UPDATE || !val) {
+    if (type != attribute::callback_type_t::POST_UPDATE || !val ||
+        s_syncing_attributes.load(std::memory_order_relaxed)) {
         return ESP_OK;
     }
 
@@ -283,19 +285,27 @@ static esp_err_t app_attribute_update_cb(
             tree_effects_set_brightness(level);
             save_state_to_nvs();
         } else if (cluster_id == ColorControl::Id) {
+            ColorControl::ColorModeEnum color_mode = ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation;
+            ColorControl::Attributes::ColorMode::Get(endpoint_id, &color_mode);
+
             if (attribute_id == ColorControl::Attributes::CurrentHue::Id ||
-                attribute_id == ColorControl::Attributes::CurrentSaturation::Id) {
-                uint8_t hue = 0;
-                uint8_t sat = 0;
-                ColorControl::Attributes::CurrentHue::Get(endpoint_id, &hue);
-                ColorControl::Attributes::CurrentSaturation::Get(endpoint_id, &sat);
-                apply_hue_sat_selection(hue, sat);
+                attribute_id == ColorControl::Attributes::CurrentSaturation::Id ||
+                attribute_id == ColorControl::Attributes::EnhancedCurrentHue::Id) {
+                if (color_mode == ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation) {
+                    uint8_t hue = 0;
+                    uint8_t sat = 0;
+                    ColorControl::Attributes::CurrentHue::Get(endpoint_id, &hue);
+                    ColorControl::Attributes::CurrentSaturation::Get(endpoint_id, &sat);
+                    apply_hue_sat_selection(hue, sat);
+                }
             } else if (attribute_id == ColorControl::Attributes::CurrentX::Id ||
                        attribute_id == ColorControl::Attributes::CurrentY::Id) {
-                uint16_t x = 20493, y = 21561;
-                ColorControl::Attributes::CurrentX::Get(endpoint_id, &x);
-                ColorControl::Attributes::CurrentY::Get(endpoint_id, &y);
-                apply_xy_selection(x, y);
+                if (color_mode == ColorControl::ColorModeEnum::kCurrentXAndCurrentY) {
+                    uint16_t x = 20493, y = 21561;
+                    ColorControl::Attributes::CurrentX::Get(endpoint_id, &x);
+                    ColorControl::Attributes::CurrentY::Get(endpoint_id, &y);
+                    apply_xy_selection(x, y);
+                }
             } else if (attribute_id == ColorControl::Attributes::ColorTemperatureMireds::Id) {
                 apply_color_temp_twinkle(val->val.u16);
             }
@@ -431,9 +441,11 @@ void matter_node_sync_after_start(void)
     uint16_t mireds = twinkle_to_mireds(twinkle, speed);
 
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    s_syncing_attributes.store(true, std::memory_order_relaxed);
     ColorControl::Attributes::CurrentHue::Set(s_light_endpoint_id, rgb ? 170 : 0);
     ColorControl::Attributes::CurrentSaturation::Set(s_light_endpoint_id, rgb ? 254 : 0);
     ColorControl::Attributes::ColorTemperatureMireds::Set(s_light_endpoint_id, mireds);
+    s_syncing_attributes.store(false, std::memory_order_relaxed);
     ESP_LOGI(TAG, "Synced Matter attributes with tree_state: Mode=%s, Twinkle=%s (Speed=%u)",
              rgb ? "RGB" : "Warm White", twinkle ? "ON" : "OFF", speed);
 }

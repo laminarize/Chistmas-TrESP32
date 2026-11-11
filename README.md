@@ -3,9 +3,9 @@
 **Manufacturer:** `Pixel Paw Studio`  
 **Model:** `Christmas TrESP32`
 
-A high-performance DIY replacement for the stock 29V DC controller/power brick and **Polygroup PDT-015-14** RF remote found on Home Depot pre-lit Christmas trees.
+A high-performance DIY replacement for the stock 29V DC controller/power brick (e.g., **Ting Shen `TS-48W29V`**, `29V DC, 1.66A, 48W`) and **Polygroup `PDT-015-14`** RF remote found on Home Depot pre-lit Christmas trees.
 
-Built using **ESP-IDF** and the official **`esp-matter`** SDK on an **ESP32-S3**, this controller pairs natively with **Samsung SmartThings** over local Wi-Fi via **Matter** and places all controls—Power, Silent Ultrasonic Dimming (`25 kHz` PWM), Warm White vs. RGB Multicolor selection, and Peaceful Twinkle with variable speed—onto a **single SmartThings device card** with no custom Edge drivers required.
+Built using **ESP-IDF** and the official **`esp-matter`** SDK on an **ESP32-S3**, this controller pairs natively with **Samsung SmartThings** over local Wi-Fi via **Matter** and places all controls—Power, Silent Ultrasonic Dimming (`25 kHz` PWM), Warm White vs. RGB Multicolor selection, and Crisp Square-Wave Twinkle with variable speed—onto a **single SmartThings device card** with no custom Edge drivers required.
 
 ---
 
@@ -56,7 +56,7 @@ The [`hardware/`](hardware/) directory contains a complete KiCad 9/10 hardware d
 The tree uses **anti-parallel LED strings** over a 2-wire bus:
 - **Polarity A (`+29V` on `OUT1`, `GND` on `OUT2` — driven by `IN1` / `GPIO 5`):** Illuminates the **Warm White** LEDs.
 - **Polarity B (`GND` on `OUT1`, `+29V` on `OUT2` — driven by `IN2` / `GPIO 6`):** Illuminates the **RGB Festive Multicolor** LEDs.
-- **Motor Screw Terminal Polarity:** Because the tree LEDs are wired in anti-parallel across the two wires, the `MOTOR` screw terminals are **non-polarized** with respect to safety—connecting your tree cable's `+` and `-` wires one way vs. the other simply determines which polarity lights Warm White vs. RGB Multicolor. If White and RGB appear swapped in the app, simply swap the two tree wires on the `MOTOR` terminal block.
+- **Motor Screw Terminal Polarity:** Because classic 2-wire bi-color trees wire LEDs in anti-parallel across the two wires, the `MOTOR` screw terminals are **non-polarized** with respect to safety—swapping the two tree wires simply swaps Warm White vs. RGB Multicolor. *(Note: Newer smart-IC / Power-Line Communication 29V trees are polarized `+29V`/`GND` and require forward-polarity pulse modulation rather than polarity reversal.)*
 
 ### Option A: Powering ESP32-S3 via USB-C (Recommended & Simplest)
 
@@ -150,12 +150,12 @@ To give you every tree control on one unified screen without custom Edge drivers
 | **Power On / Off** | **Main Power Button** | `OnOff` (`OnOff`) | Turns the tree lights completely On or Off. |
 | **Variable Dimmer Slider** | **Dimmer Slider (`0% – 100%`)** | `LevelControl` (`CurrentLevel`) | Smoothly dims the active tree mode (`0 – 254`) using silent `25 kHz` ultrasonic PWM. |
 | **Warm White vs. RGB Toggle** | **White Swatch vs. Rainbow Swatch** | `ColorControl` (`CurrentHue`, `CurrentSaturation`, `CurrentX/Y`) | • **Tap the White Square (right):** Selects **Warm White** (`GPIO 5` / `IN1`).<br>• **Pick ANY color in the Rainbow Square (left):** Selects **RGB Festive Multicolor** (`GPIO 6` / `IN2`). |
-| **Twinkle Toggle & Speed Slider** | **Color Temperature Slider (`2,200 K – 6,500 K`)** | `ColorControl` (`ColorTemperatureMireds` `455 – 154`) | • **Slide far left (`2,200 K`):** **Twinkle OFF** (Steady illumination).<br>• **Slide right (`2,400 K – 6,500 K`):** **Twinkle ON** — adjusts speed from a slow, peaceful ~8s organic shimmer on the left to a faster ~1.6s festive twinkle on the right. |
+| **Twinkle Toggle & Speed Slider** | **Color Temperature Slider (`2,200 K – 6,500 K`)** | `ColorControl` (`ColorTemperatureMireds` `455 – 154`) | • **Slide far left (`2,200 K`):** **Twinkle OFF** (Steady illumination).<br>• **Slide right (`2,400 K – 6,500 K`):** **Twinkle ON** — adjusts square-wave speed from a slow `~3.0 s` cycle on the left to a brisk `0.40 s` festive twinkle on the right. |
 
 > [!NOTE]
 > - **Why a Rainbow Wheel is Shown:** SmartThings hardcodes the color wheel UI whenever a Matter device uses the single-card `light-color-level` profile. Because the physical 2-wire tree has fixed multi-color RGB LEDs in one polarity and Warm White LEDs in the other, picking **any** saturated color on the wheel (`Saturation >= 25`) activates the **RGB Festive Multicolor** string, while tapping the **White square** (`Saturation < 25`) activates the **Warm White** string.
-> - **Avoiding the "Circadian Lighting" Popup:** In the SmartThings iOS app, the rightmost running-person/sun icon in the "Presets" row opens Samsung's built-in Circadian Lighting dialog. Ignore that icon and instead drag the **horizontal Color Temperature slider bar (`2,200 K – 6,500 K`)** directly below the Rainbow/White squares to toggle Twinkle and adjust Twinkle Speed.
-> - **Peaceful Twinkle Engine:** Rather than harsh full-tree strobing, the twinkle effect gently modulates above a `48%` steady baseline using a dual-harmonic sine/cosine wave so individual bulbs with higher forward voltage ($V_f$) softly shimmer while the rest of the tree stays warmly lit.
+> - **Avoiding the "Circadian Lighting" Popup:** In the SmartThings iOS app, the rightmost running-person/sun icon in the "Presets" row opens Samsung's built-in Circadian Lighting dialog. Ignore that icon and instead drag the **horizontal Color Temperature slider bar (`2,200 K – 6,500 K`)** directly below the Rainbow/White squares to toggle Twinkle and adjust Twinkle Speed (note that tapping SmartThings' `2,700 K` "Soft white" preset also moves this slider out of the `2,200 K` Steady zone and enables Twinkle).
+> - **Square-Wave Twinkle Engine:** Rather than pulsing along smooth sine curves or strobing completely dark, Twinkle steps crisply in a square wave between `100%` and `30%` of your current dimmer setting so twinkling channels never turn completely off.
 > - **Automatic State Persistence:** Power, brightness, Warm White/RGB selection, twinkle state, and twinkle speed are automatically persisted in NVS flash (`tree_state`) and restored after a power outage.
 
 ---

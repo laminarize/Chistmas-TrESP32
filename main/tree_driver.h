@@ -14,8 +14,11 @@ extern "C" {
 #define TREE_DEFAULT_PIN_IN2  GPIO_NUM_6
 
 // PWM Configuration (25 kHz ultrasonic to eliminate audible 5 kHz coil/capacitor whine)
-#define TREE_PWM_FREQ_HZ      25000
-#define TREE_PWM_MAX_DUTY     1023   // 10-bit resolution (0 - 1023)
+// Note: For ESP-IDF 10-bit LEDC resolution, full 100% constant-HIGH DC duty is 2^10 = 1024.
+// At 25 kHz (40 us period, ~39.06 ns/tick), 22 ticks (~859 ns) exceeds DRV8871's 800 ns min input pulse width.
+#define TREE_PWM_FREQ_HZ          25000
+#define TREE_PWM_MAX_DUTY         1024
+#define TREE_PWM_MIN_ACTIVE_DUTY  22
 
 /**
  * @brief Initialize the DRV8871 H-bridge driver using LEDC hardware PWM.
@@ -27,15 +30,15 @@ extern "C" {
 esp_err_t tree_driver_init(gpio_num_t pin_in1, gpio_num_t pin_in2);
 
 /**
- * @brief Set the target brightness for each polarity (0 - 1023).
+ * @brief Set the target brightness for each polarity (0 - 1024).
  *
  * Polarity A (duty_a) lights Warm White LEDs (+29V on Pin 1).
  * Polarity B (duty_b) lights Multicolor LEDs (-29V on Pin 1).
  * When both are > 0, the driver alternates between polarities at 200 Hz
  * so both colors appear steadily lit without flicker.
  *
- * @param duty_a Brightness for Polarity A / Warm White (0 to 1023)
- * @param duty_b Brightness for Polarity B / Multicolor (0 to 1023)
+ * @param duty_a Brightness for Polarity A / Warm White (0 to 1024)
+ * @param duty_b Brightness for Polarity B / Multicolor (0 to 1024)
  */
 void tree_driver_set_duties(uint32_t duty_a, uint32_t duty_b);
 

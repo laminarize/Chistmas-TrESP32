@@ -9,8 +9,11 @@
 
 static const char *TAG = "tree_effects";
 
+// Square-wave twinkle floor: dimming phase dips to 30% of current dim setting (never fully off)
+#define TWINKLE_DIM_FACTOR  0.30f
+
 static bool s_power_on = true;
-static uint8_t s_brightness = 254; // Matter max is 254 (maps to 1023 internally)
+static uint8_t s_brightness = 254; // Matter max is 254 (maps to TREE_PWM_MAX_DUTY = 1024)
 static bool s_rgb_mode = false;     // false = Warm White, true = RGB / Multicolor
 static bool s_twinkle_on = false;   // false = Steady, true = Twinkle
 static uint8_t s_twinkle_speed = 128; // 0 - 254 (default 50%)
@@ -276,21 +279,31 @@ tree_mode_t tree_effects_get_mode(void)
     return m;
 }
 
-// Convert Matter 0-254 level into 0-1023 driver duty
+// Convert Matter 0-254 level into 0-TREE_PWM_MAX_DUTY (0-1024) driver duty
 static inline uint32_t scale_duty(float factor, uint8_t brightness)
 {
-    if (factor < 0.0f) factor = 0.0f;
-    if (factor > 1.0f) factor = 1.0f;
-    float peak = ((float)brightness / 254.0f) * 1023.0f;
-    return (uint32_t)(factor * peak);
+    if (brightness == 0 || factor <= 0.0f) {
+        return 0;
+    }
+    if (factor > 1.0f) {
+        factor = 1.0f;
+    }
+    if (brightness >= 254 && factor >= 1.0f) {
+        return TREE_PWM_MAX_DUTY;
+    }
+    float peak = ((float)brightness / 254.0f) * (float)TREE_PWM_MAX_DUTY;
+    uint32_t duty = (uint32_t)(factor * peak + 0.5f);
+    if (duty > TREE_PWM_MAX_DUTY) {
+        duty = TREE_PWM_MAX_DUTY;
+    }
+    return duty;
 }
 
 static void effects_task(void *pvParameters)
 {
     const TickType_t delay_ticks = pdMS_TO_TICKS(20); // 50 Hz update rate
     float angle = 0.0f;
-    float twinkle_phase1 = 0.0f;
-    float twinkle_phase2 = 0.0f;
+    float twinkle_phase = 0.0f;
     uint32_t demo_timer_ticks = 0;
     tree_mode_t demo_sub_mode = TREE_MODE_STEADY_WARM_WHITE;
 
@@ -323,24 +336,16 @@ static void effects_task(void *pvParameters)
             angle -= 2.0f * M_PI;
         }
 
-        // Slow, peaceful twinkle wave (no rapid full-tree random strobe spikes):
-        // At speed=1: ~8 second gentle cycle; at speed=254: ~1.6 second gentle cycle
-        float phase_inc = 0.015f + 0.060f * ((float)twinkle_speed / 254.0f);
-        twinkle_phase1 += phase_inc;
-        twinkle_phase2 += phase_inc * 1.618f;
-        if (twinkle_phase1 >= 2.0f * M_PI) twinkle_phase1 -= 2.0f * M_PI;
-        if (twinkle_phase2 >= 2.0f * M_PI) twinkle_phase2 -= 2.0f * M_PI;
+        // Crisp 50% duty square-wave twinkle (100% <-> 30% of current dim setting, never fully off):
+        // At speed=1: ~0.34 Hz (~3.0 s cycle); speed=128: ~1.42 Hz (~0.70 s cycle); speed=254: 2.50 Hz (0.40 s cycle)
+        float twinkle_freq_hz = 0.33f + 2.17f * ((float)twinkle_speed / 254.0f);
+        twinkle_phase += twinkle_freq_hz * 0.020f;
+        while (twinkle_phase >= 1.0f) {
+            twinkle_phase -= 1.0f;
+        }
 
-        // Smooth organic modulation between 48% baseline and 100% peak so the tree
-        // never flashes completely dark all at once
-        float wave_a = 0.5f + 0.38f * sinf(twinkle_phase1) + 0.12f * cosf(twinkle_phase2);
-        float wave_b = 0.5f - 0.38f * sinf(twinkle_phase1) + 0.12f * sinf(twinkle_phase2);
-        float shimmer_a = 0.48f + 0.52f * wave_a;
-        float shimmer_b = 0.48f + 0.52f * wave_b;
-        if (shimmer_a < 0.48f) shimmer_a = 0.48f;
-        if (shimmer_a > 1.0f)  shimmer_a = 1.0f;
-        if (shimmer_b < 0.48f) shimmer_b = 0.48f;
-        if (shimmer_b > 1.0f)  shimmer_b = 1.0f;
+        bool square_high = (twinkle_phase < 0.5f);
+        float twinkle_a = square_high ? 1.0f : TWINKLE_DIM_FACTOR;
 
         // Handle Demo Mode cycling every 15 seconds (750 ticks at 50Hz)
         tree_mode_t effective_mode = mode;
@@ -357,46 +362,27 @@ static void effects_task(void *pvParameters)
         float sin_val = (sinf(angle) + 1.0f) * 0.5f; // 0.0 to 1.0
         float gamma_val = sin_val * sin_val;         // Natural breathing curve
 
+        // NOTE: This tree uses unidirectional +29V smart-IC strings (Polarity A / IN1 only).
+        // Reversing polarity (-29V on IN2 / duty_b) turns the entire tree off until the stock
+        // TS-48W29V forward-polarity pulse-code (PLC) packets are captured and added.
+        // Keep all active modes mapped onto Polarity A (Warm White) with duty_b = 0 for now.
         switch (effective_mode) {
             case TREE_MODE_STEADY_WARM_WHITE:
+            case TREE_MODE_STEADY_MULTICOLOR:
+            case TREE_MODE_STEADY_DUAL:
                 tree_driver_set_duties(scale_duty(1.0f, brightness), 0);
                 break;
 
-            case TREE_MODE_STEADY_MULTICOLOR:
-                tree_driver_set_duties(0, scale_duty(1.0f, brightness));
-                break;
-
-            case TREE_MODE_STEADY_DUAL:
-                tree_driver_set_duties(scale_duty(1.0f, brightness), scale_duty(1.0f, brightness));
-                break;
-
             case TREE_MODE_FADE_WARM_WHITE:
+            case TREE_MODE_FADE_MULTICOLOR:
+            case TREE_MODE_FADE_ALTERNATING:
                 tree_driver_set_duties(scale_duty(gamma_val, brightness), 0);
                 break;
 
-            case TREE_MODE_FADE_MULTICOLOR:
-                tree_driver_set_duties(0, scale_duty(gamma_val, brightness));
-                break;
-
-            case TREE_MODE_FADE_ALTERNATING: {
-                float fade_a = sin_val;
-                float fade_b = 1.0f - sin_val;
-                tree_driver_set_duties(scale_duty(fade_a * fade_a, brightness),
-                                       scale_duty(fade_b * fade_b, brightness));
-                break;
-            }
-
             case TREE_MODE_TWINKLE_WARM_WHITE:
-                tree_driver_set_duties(scale_duty(shimmer_a, brightness), 0);
-                break;
-
             case TREE_MODE_TWINKLE_MULTICOLOR:
-                tree_driver_set_duties(0, scale_duty(shimmer_b, brightness));
-                break;
-
             case TREE_MODE_TWINKLE_ALTERNATING:
-                tree_driver_set_duties(scale_duty(shimmer_a, brightness),
-                                       scale_duty(shimmer_b, brightness));
+                tree_driver_set_duties(scale_duty(twinkle_a, brightness), 0);
                 break;
 
             default:
