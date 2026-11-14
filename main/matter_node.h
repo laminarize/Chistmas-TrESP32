@@ -1,7 +1,6 @@
 #pragma once
 
 #include "esp_err.h"
-#include <stdint.h>
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -9,26 +8,27 @@ extern "C" {
 #endif
 
 /**
- * @brief Initialize the Matter Data Model for the Christmas TrESP32 node.
- *
- * Configures:
- * - Root Node (Endpoint 0: BasicInformation overridden with Manufacturer
- *   "Pixel Paw Studio" and Model "Christmas TrESP32")
- * - Single-Card Extended Color Light (Endpoint 1: OnOff, LevelControl,
- *   ColorControl with Hue/Saturation + XY + ColorTemperatureMireds)
- *
- * @return esp_err_t ESP_OK on success
+ * Initialize the Matter Data Model with a single endpoint (Endpoint 1):
+ *   - Endpoint 1 (Color Temperature Light 0x010C):
+ *       * OnOff        -> Master Power On/Off
+ *       * LevelControl -> Dimmer Slider (1% - 100%, 25 kHz PWM)
+ *       * ColorControl -> RGB Toggle State (154 mireds = RGB Multicolor ON,
+ *                         455 mireds = Warm White OFF), mapped to a clean
+ *                         "RGB Multicolor" On/Off toggle switch on the same
+ *                         single SmartThings card by edge-driver/.
  */
 esp_err_t matter_node_init(void);
 
 /**
- * @brief Synchronize Matter attribute values with persisted NVS tree state
- *        after esp_matter::start() has initialized the attribute database.
+ * Synchronize Matter attributes on Endpoint 1 with our NVS state AFTER
+ * esp_matter::start() so SmartThings always sees the authoritative power,
+ * brightness, and Warm White / RGB state.
  */
 void matter_node_sync_after_start(void);
 
 /**
- * @brief Return true while Matter Identify is active on the node/endpoint.
+ * Returns true while the Matter Identify cluster is actively identifying
+ * (either timed IdentifyTime countdown or TriggerEffect).
  */
 bool matter_node_is_identifying(void);
 

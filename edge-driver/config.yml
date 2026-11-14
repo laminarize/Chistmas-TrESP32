@@ -1,0 +1,6 @@
+name: 'Christmas TrESP32'
+packageKey: 'pixelpaw-christmas-tresp32'
+permissions:
+  matter: {}
+description: 'Local SmartThings Matter driver for Pixel Paw Studio Christmas TrESP32 (single-card Master Power, Dimmer, and RGB Multicolor Toggle)'
+vendorSupportInformation: 'https://github.com/laminarize/Chistmas-TrESP32'

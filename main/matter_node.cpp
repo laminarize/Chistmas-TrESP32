@@ -6,8 +6,8 @@
 #include <esp_timer.h>
 #include <nvs_flash.h>
 #include <nvs.h>
+#include <sdkconfig.h>
 #include <atomic>
-#include <math.h>
 #include <string.h>
 
 #include <esp_matter.h>
@@ -15,8 +15,6 @@
 #include <esp_matter_cluster.h>
 #include <esp_matter_endpoint.h>
 #include <esp_matter_attribute.h>
-#include <esp_matter_feature.h>
-#include <app/server/Server.h>
 #include <app-common/zap-generated/attributes/Accessors.h>
 #include <platform/DeviceInstanceInfoProvider.h>
 #include <zap_common/app/ClusterCallbacks.h>
@@ -28,27 +26,28 @@ static const char *TAG = "matter_node";
 
 #define VENDOR_NAME_STR     "Pixel Paw Studio"
 #define PRODUCT_NAME_STR    "Christmas TrESP32"
+#define TREE_VENDOR_ID      0xFFF1
+#define TREE_PRODUCT_ID     0x8000
+
+// Endpoint 1 ColorTemperatureMireds encoding used by edge-driver/ for the RGB toggle switch:
+//   <= 300 mireds (154) -> RGB Multicolor ON  (Polarity B / -29V)
+//   >  300 mireds (455) -> Warm White (RGB OFF, Polarity A / +29V)
+#define MIREDS_RGB_ON       154
+#define MIREDS_WARM_WHITE   455
+#define MIREDS_THRESHOLD    300
 
 #define NVS_NAMESPACE       "tree_state"
 #define NVS_KEY_POWER       "power"
 #define NVS_KEY_LEVEL       "level"
 #define NVS_KEY_RGB         "rgb"
-#define NVS_KEY_TWINKLE     "twinkle"
-#define NVS_KEY_SPEED       "speed"
-
-// SmartThings default Color Temperature bounds (2200K = 455 mireds, 6500K = 154 mireds)
-#define CT_MIRED_MIN_6500K  154
-#define CT_MIRED_MAX_2200K  455
-// Threshold at the left end of the Color Temperature slider (~2200K - 2300K) for Twinkle OFF (Steady)
-#define CT_MIRED_STEADY_THRESHOLD 435
 
 static uint16_t s_light_endpoint_id = 1;
 static std::atomic<bool> s_syncing_attributes{false};
 
 /**
- * Custom DeviceInstanceInfoProvider that overrides Manufacturer (VendorName)
- * to "Pixel Paw Studio" and Model (ProductName / ProductLabel) to "Christmas TrESP32"
- * while delegating all other factory/device fields to the default ESP32 provider.
+ * Custom DeviceInstanceInfoProvider that pins VendorId (0xFFF1), ProductId (0x8000),
+ * Manufacturer ("Pixel Paw Studio"), and Model ("Christmas TrESP32") so our local
+ * SmartThings Edge Driver (edge-driver/fingerprints.yml) always matches deterministically.
  */
 class PixelPawDeviceInstanceInfoProvider : public chip::DeviceLayer::DeviceInstanceInfoProvider
 {
@@ -87,12 +86,14 @@ public:
 
     CHIP_ERROR GetVendorId(uint16_t &vendorId) override
     {
-        return m_default ? m_default->GetVendorId(vendorId) : CHIP_ERROR_NOT_IMPLEMENTED;
+        vendorId = TREE_VENDOR_ID;
+        return CHIP_NO_ERROR;
     }
 
     CHIP_ERROR GetProductId(uint16_t &productId) override
     {
-        return m_default ? m_default->GetProductId(productId) : CHIP_ERROR_NOT_IMPLEMENTED;
+        productId = TREE_PRODUCT_ID;
+        return CHIP_NO_ERROR;
     }
 
     CHIP_ERROR GetPartNumber(char *buf, size_t bufSize) override
@@ -153,110 +154,25 @@ static void save_state_to_nvs(void)
         nvs_set_u8(handle, NVS_KEY_POWER, tree_effects_get_power() ? 1 : 0);
         nvs_set_u8(handle, NVS_KEY_LEVEL, tree_effects_get_brightness());
         nvs_set_u8(handle, NVS_KEY_RGB, tree_effects_get_rgb_mode() ? 1 : 0);
-        nvs_set_u8(handle, NVS_KEY_TWINKLE, tree_effects_get_twinkle() ? 1 : 0);
-        nvs_set_u8(handle, NVS_KEY_SPEED, tree_effects_get_twinkle_speed());
         nvs_commit(handle);
         nvs_close(handle);
     }
 }
 
-static void load_state_from_nvs(bool *power, uint8_t *brightness, bool *rgb, bool *twinkle, uint8_t *speed)
+static void load_state_from_nvs(bool *power, uint8_t *brightness, bool *rgb)
 {
     *power = true;
     *brightness = 254;
     *rgb = false;
-    *twinkle = false;
-    *speed = 128;
 
     nvs_handle_t handle;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
-        uint8_t p = 1, l = 254, r = 0, t = 0, s = 128;
+        uint8_t p = 1, l = 254, r = 0;
         if (nvs_get_u8(handle, NVS_KEY_POWER, &p) == ESP_OK) *power = (p != 0);
         if (nvs_get_u8(handle, NVS_KEY_LEVEL, &l) == ESP_OK) *brightness = l;
         if (nvs_get_u8(handle, NVS_KEY_RGB, &r) == ESP_OK) *rgb = (r != 0);
-        if (nvs_get_u8(handle, NVS_KEY_TWINKLE, &t) == ESP_OK) *twinkle = (t != 0);
-        if (nvs_get_u8(handle, NVS_KEY_SPEED, &s) == ESP_OK) *speed = s;
         nvs_close(handle);
     }
-}
-
-/**
- * Convert Twinkle ON/OFF + Speed (1..254) to Mireds (455..154)
- * - Steady (Twinkle OFF) -> 455 mireds (2200K, far left of slider)
- * - Twinkle ON -> 425 mireds (slowest, ~2350K) down to 154 mireds (fastest, 6500K)
- */
-static uint16_t twinkle_to_mireds(bool twinkle, uint8_t speed)
-{
-    if (!twinkle) {
-        return CT_MIRED_MAX_2200K;
-    }
-    uint16_t mired = 425 - (uint16_t)(((uint32_t)speed * (425 - CT_MIRED_MIN_6500K)) / 254);
-    if (mired < CT_MIRED_MIN_6500K) mired = CT_MIRED_MIN_6500K;
-    if (mired > 425) mired = 425;
-    return mired;
-}
-
-/**
- * Simple Binary RGB vs. Warm White Selector from SmartThings Color Control:
- * - Tapping the White swatch (or center white of wheel, Saturation < 25) -> Warm White Mode (GPIO 5 / IN1)
- * - Selecting ANY color on the Rainbow picker (Saturation >= 25)         -> RGB Festive Multicolor Mode (GPIO 6 / IN2)
- */
-static void apply_hue_sat_selection(uint8_t hue, uint8_t sat)
-{
-    bool is_rgb = (sat >= 25);
-    ESP_LOGI(TAG, "Color Selector [Hue=%u, Sat=%u] -> %s",
-             hue, sat, is_rgb ? "RGB (Festive Multicolor)" : "WARM WHITE");
-    tree_effects_set_dual_color(false);
-    tree_effects_set_rgb_mode(is_rgb);
-    save_state_to_nvs();
-}
-
-/**
- * Fallback if controller sends CIE XY coordinates instead of Hue/Saturation:
- * - Only the neutral white region (around D65 / warm white swatch, dist < 0.055 from white point) selects Warm White
- * - Any saturated color on the wheel selects RGB Festive Multicolor Mode
- */
-static void apply_xy_selection(uint16_t x_raw, uint16_t y_raw)
-{
-    float x = (float)x_raw / 65536.0f;
-    float y = (float)y_raw / 65536.0f;
-
-    float dx = x - 0.313f;
-    float dy = y - 0.329f;
-    float dist = sqrtf(dx * dx + dy * dy);
-
-    bool is_rgb = (dist >= 0.055f);
-    ESP_LOGI(TAG, "Color XY [%.3f, %.3f, dist=%.3f] -> %s",
-             x, y, dist, is_rgb ? "RGB (Festive Multicolor)" : "WARM WHITE");
-    tree_effects_set_dual_color(false);
-    tree_effects_set_rgb_mode(is_rgb);
-    save_state_to_nvs();
-}
-
-/**
- * Evaluate Color Temperature Slider (Mireds 455..154, i.e. 2200K..6500K) as:
- * - Twinkle Toggle: Far left (2200K-2300K, mireds >= 435) = Twinkle OFF (Steady)
- * - Twinkle Speed Slider: 2350K..6500K (mireds 434..154) = Twinkle ON with Speed 1..254
- */
-static void apply_color_temp_twinkle(uint16_t mireds)
-{
-    if (mireds >= CT_MIRED_STEADY_THRESHOLD) {
-        ESP_LOGI(TAG, "Twinkle Slider [%u mireds / ~%uK] -> Twinkle OFF (Steady)",
-                 mireds, 1000000U / (mireds ? mireds : 1));
-        tree_effects_set_twinkle(false);
-    } else {
-        uint16_t clamped = mireds;
-        if (clamped < CT_MIRED_MIN_6500K) clamped = CT_MIRED_MIN_6500K;
-        // Map [434 .. 154] -> [1 .. 254]
-        uint32_t span = (CT_MIRED_STEADY_THRESHOLD - 1) - CT_MIRED_MIN_6500K;
-        uint32_t pos  = (CT_MIRED_STEADY_THRESHOLD - 1) - clamped;
-        uint8_t speed = (uint8_t)(1 + (pos * 253) / span);
-        ESP_LOGI(TAG, "Twinkle Slider [%u mireds / ~%uK] -> Twinkle ON, Speed=%u/254 (%.0f%%)",
-                 mireds, 1000000U / (mireds ? mireds : 1), speed, (float)speed / 254.0f * 100.0f);
-        tree_effects_set_twinkle_speed(speed);
-        tree_effects_set_twinkle(true);
-    }
-    save_state_to_nvs();
 }
 
 static esp_err_t app_attribute_update_cb(
@@ -272,44 +188,31 @@ static esp_err_t app_attribute_update_cb(
         return ESP_OK;
     }
 
-    if (endpoint_id == s_light_endpoint_id) {
-        if (cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
-            bool power = val->val.b;
-            ESP_LOGI(TAG, "SmartThings Master Power: %s", power ? "ON" : "OFF");
-            tree_effects_set_power(power);
-            save_state_to_nvs();
-        } else if (cluster_id == LevelControl::Id && attribute_id == LevelControl::Attributes::CurrentLevel::Id) {
-            uint8_t level = val->val.u8;
-            ESP_LOGI(TAG, "SmartThings Dimming Slider: %u / 254 (%.0f%%)",
-                     level, (float)level / 254.0f * 100.0f);
-            tree_effects_set_brightness(level);
-            save_state_to_nvs();
-        } else if (cluster_id == ColorControl::Id) {
-            ColorControl::ColorModeEnum color_mode = ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation;
-            ColorControl::Attributes::ColorMode::Get(endpoint_id, &color_mode);
+    if (endpoint_id != s_light_endpoint_id) {
+        return ESP_OK;
+    }
 
-            if (attribute_id == ColorControl::Attributes::CurrentHue::Id ||
-                attribute_id == ColorControl::Attributes::CurrentSaturation::Id ||
-                attribute_id == ColorControl::Attributes::EnhancedCurrentHue::Id) {
-                if (color_mode == ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation) {
-                    uint8_t hue = 0;
-                    uint8_t sat = 0;
-                    ColorControl::Attributes::CurrentHue::Get(endpoint_id, &hue);
-                    ColorControl::Attributes::CurrentSaturation::Get(endpoint_id, &sat);
-                    apply_hue_sat_selection(hue, sat);
-                }
-            } else if (attribute_id == ColorControl::Attributes::CurrentX::Id ||
-                       attribute_id == ColorControl::Attributes::CurrentY::Id) {
-                if (color_mode == ColorControl::ColorModeEnum::kCurrentXAndCurrentY) {
-                    uint16_t x = 20493, y = 21561;
-                    ColorControl::Attributes::CurrentX::Get(endpoint_id, &x);
-                    ColorControl::Attributes::CurrentY::Get(endpoint_id, &y);
-                    apply_xy_selection(x, y);
-                }
-            } else if (attribute_id == ColorControl::Attributes::ColorTemperatureMireds::Id) {
-                apply_color_temp_twinkle(val->val.u16);
-            }
-        }
+    if (cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
+        bool power = val->val.b;
+        ESP_LOGI(TAG, "SmartThings Master Power: %s", power ? "ON" : "OFF");
+        tree_effects_set_power(power);
+        save_state_to_nvs();
+    } else if (cluster_id == LevelControl::Id && attribute_id == LevelControl::Attributes::CurrentLevel::Id) {
+        uint8_t level = val->val.u8;
+        ESP_LOGI(TAG, "SmartThings Dimming Slider: %u / 254 (%.0f%%)",
+                 level, (float)level / 254.0f * 100.0f);
+        tree_effects_set_brightness(level);
+        save_state_to_nvs();
+    } else if (cluster_id == ColorControl::Id &&
+               attribute_id == ColorControl::Attributes::ColorTemperatureMireds::Id) {
+        uint16_t mireds = val->val.u16;
+        bool rgb_on = (mireds <= MIREDS_THRESHOLD);
+        ESP_LOGI(TAG, "SmartThings RGB Toggle (mireds=%u): %s -> %s",
+                 mireds, rgb_on ? "ON" : "OFF",
+                 rgb_on ? "RGB Multicolor (Polarity B)" : "Warm White (Polarity A)");
+        tree_effects_set_dual_color(false);
+        tree_effects_set_rgb_mode(rgb_on);
+        save_state_to_nvs();
     }
 
     return ESP_OK;
@@ -351,18 +254,15 @@ esp_err_t matter_node_init(void)
     bool initial_power;
     uint8_t initial_brightness;
     bool initial_rgb;
-    bool initial_twinkle;
-    uint8_t initial_speed;
 
-    load_state_from_nvs(&initial_power, &initial_brightness, &initial_rgb,
-                        &initial_twinkle, &initial_speed);
+    load_state_from_nvs(&initial_power, &initial_brightness, &initial_rgb);
 
     tree_effects_set_power(initial_power);
     tree_effects_set_brightness(initial_brightness);
     tree_effects_set_dual_color(false);
+    tree_effects_set_fade(false);
+    tree_effects_set_twinkle(false);
     tree_effects_set_rgb_mode(initial_rgb);
-    tree_effects_set_twinkle_speed(initial_speed);
-    tree_effects_set_twinkle(initial_twinkle);
 
     node::config_t node_config;
     strncpy(node_config.root_node.basic_information.node_label, PRODUCT_NAME_STR,
@@ -375,7 +275,7 @@ esp_err_t matter_node_init(void)
     }
 
     // Override BasicInformation Cluster's DeviceInstanceInfoProvider so SmartThings reads
-    // Manufacturer = "Pixel Paw Studio" and Model = "Christmas TrESP32"
+    // VendorId = 0xFFF1, ProductId = 0x8000, Manufacturer = "Pixel Paw Studio", Model = "Christmas TrESP32"
     endpoint_t *root_ep = endpoint::get(node, 0);
     if (root_ep) {
         cluster_t *basic_info_cluster = cluster::get(root_ep, BasicInformation::Id);
@@ -389,63 +289,59 @@ esp_err_t matter_node_init(void)
         }
     }
 
-    // Single-Card SmartThings Profile: Extended Color Light (0x010D -> light-color-level)
-    endpoint::extended_color_light::config_t light_config;
+    // Single Matter Endpoint (Endpoint 1): Power + Dimmer + RGB Toggle State
+    uint16_t initial_mireds = initial_rgb ? MIREDS_RGB_ON : MIREDS_WARM_WHITE;
+
+    endpoint::color_temperature_light::config_t light_config;
     light_config.on_off.on_off = initial_power;
     light_config.on_off_lighting.start_up_on_off = nullptr;
     light_config.level_control.current_level = initial_brightness;
-    light_config.level_control.on_level = initial_brightness;
+    light_config.level_control.on_level = nullptr; // Keep Routine / pre-staged CurrentLevel on Turn-On
+    light_config.level_control.options = 0x01; // ExecuteIfOff
     light_config.level_control_lighting.start_up_current_level = initial_brightness;
-
-    uint16_t initial_mireds = twinkle_to_mireds(initial_twinkle, initial_speed);
-    light_config.color_control.color_mode = (uint8_t)ColorControl::ColorMode::kCurrentHueAndCurrentSaturation;
-    light_config.color_control.enhanced_color_mode = (uint8_t)ColorControl::ColorMode::kCurrentHueAndCurrentSaturation;
+    light_config.color_control.color_mode = 2; // ColorTemperatureMireds
+    light_config.color_control.enhanced_color_mode = 2;
+    light_config.color_control.color_control_options = 0x01; // ExecuteIfOff
+    light_config.color_control_color_temperature.color_temp_physical_min_mireds = MIREDS_RGB_ON;
+    light_config.color_control_color_temperature.color_temp_physical_max_mireds = MIREDS_WARM_WHITE;
+    light_config.color_control_color_temperature.couple_color_temp_to_level_min_mireds = MIREDS_RGB_ON;
     light_config.color_control_color_temperature.color_temperature_mireds = initial_mireds;
-    light_config.color_control_color_temperature.color_temp_physical_min_mireds = CT_MIRED_MIN_6500K;
-    light_config.color_control_color_temperature.color_temp_physical_max_mireds = CT_MIRED_MAX_2200K;
-    light_config.color_control_color_temperature.couple_color_temp_to_level_min_mireds = CT_MIRED_MIN_6500K;
     light_config.color_control_color_temperature.start_up_color_temperature_mireds = nullptr;
 
-    endpoint_t *light_ep = endpoint::extended_color_light::create(node, &light_config, ENDPOINT_FLAG_NONE, nullptr);
+    endpoint_t *light_ep = endpoint::color_temperature_light::create(node, &light_config, ENDPOINT_FLAG_NONE, nullptr);
     if (!light_ep) {
-        ESP_LOGE(TAG, "Failed to create extended_color_light endpoint");
+        ESP_LOGE(TAG, "Failed to create single light endpoint");
         return ESP_FAIL;
     }
     s_light_endpoint_id = endpoint::get_id(light_ep);
 
-    // Enable Hue & Saturation feature on ColorControl so SmartThings sends MoveToHueAndSaturation
-    cluster_t *color_cluster = cluster::get(light_ep, ColorControl::Id);
-    if (color_cluster) {
-        cluster::color_control::feature::hue_saturation::config_t hs_cfg;
-        hs_cfg.current_hue = initial_rgb ? 170 : 0;
-        hs_cfg.current_saturation = initial_rgb ? 254 : 0;
-        cluster::color_control::feature::hue_saturation::add(color_cluster, &hs_cfg);
-    }
-
-    // Mark deferred persistence for rapidly changing slider attributes
+    // Mark deferred persistence for rapidly changing dimmer slider attribute
     attribute_t *level_attr = attribute::get(s_light_endpoint_id, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id);
     if (level_attr) attribute::set_deferred_persistence(level_attr);
-    attribute_t *ct_attr = attribute::get(s_light_endpoint_id, ColorControl::Id, ColorControl::Attributes::ColorTemperatureMireds::Id);
-    if (ct_attr) attribute::set_deferred_persistence(ct_attr);
 
-    ESP_LOGI(TAG, "Single-Card Extended Color Light created on Endpoint %d (%s - %s)",
-             s_light_endpoint_id, VENDOR_NAME_STR, PRODUCT_NAME_STR);
+    ESP_LOGI(TAG, "Single Matter endpoint created on EP %u (%s - %s, VID=0x%04X, PID=0x%04X)",
+             s_light_endpoint_id, VENDOR_NAME_STR, PRODUCT_NAME_STR, TREE_VENDOR_ID, TREE_PRODUCT_ID);
     return ESP_OK;
 }
 
 void matter_node_sync_after_start(void)
 {
+    bool power = tree_effects_get_power();
+    uint8_t brightness = tree_effects_get_brightness();
     bool rgb = tree_effects_get_rgb_mode();
-    bool twinkle = tree_effects_get_twinkle();
-    uint8_t speed = tree_effects_get_twinkle_speed();
-    uint16_t mireds = twinkle_to_mireds(twinkle, speed);
+    uint16_t mireds = rgb ? MIREDS_RGB_ON : MIREDS_WARM_WHITE;
 
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
     s_syncing_attributes.store(true, std::memory_order_relaxed);
-    ColorControl::Attributes::CurrentHue::Set(s_light_endpoint_id, rgb ? 170 : 0);
-    ColorControl::Attributes::CurrentSaturation::Set(s_light_endpoint_id, rgb ? 254 : 0);
+    OnOff::Attributes::OnOff::Set(s_light_endpoint_id, power);
+    LevelControl::Attributes::OnLevel::SetNull(s_light_endpoint_id);
+    LevelControl::Attributes::CurrentLevel::Set(s_light_endpoint_id, brightness);
+    ColorControl::Attributes::ColorMode::Set(
+        s_light_endpoint_id, static_cast<ColorControl::ColorModeEnum>(2));
+    ColorControl::Attributes::EnhancedColorMode::Set(
+        s_light_endpoint_id, static_cast<ColorControl::EnhancedColorModeEnum>(2));
     ColorControl::Attributes::ColorTemperatureMireds::Set(s_light_endpoint_id, mireds);
     s_syncing_attributes.store(false, std::memory_order_relaxed);
-    ESP_LOGI(TAG, "Synced Matter attributes with tree_state: Mode=%s, Twinkle=%s (Speed=%u)",
-             rgb ? "RGB" : "Warm White", twinkle ? "ON" : "OFF", speed);
+    ESP_LOGI(TAG, "Synced single-endpoint Matter state: Power=%s, Level=%u, RGB=%s (mireds=%u)",
+             power ? "ON" : "OFF", brightness, rgb ? "ON (Multicolor)" : "OFF (Warm White)", mireds);
 }

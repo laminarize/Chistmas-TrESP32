@@ -1,0 +1,46 @@
+name: christmas-tresp32
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: switchLevel
+        version: 1
+        config:
+          values:
+            - key: "level.value"
+              range: [1, 100]
+      - id: statelessSwitchLevelStep
+        version: 1
+      - id: firmwareUpdate
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: Light
+  - id: rgbMode
+    label: RGB Multicolor
+    capabilities:
+      - id: switch
+        version: 1
+    categories:
+      - name: Switch
+preferences:
+  - name: "preferredOnLevel"
+    title: "Preferred Turn-On Dim Level (%)"
+    description: "Default brightness when turned ON by the card Power-On schedule, tile tap, or voice (0 = remember last dim level, 1-100 = preferred %)."
+    required: true
+    preferenceType: number
+    definition:
+      minimum: 0
+      maximum: 100
+      default: 0
+  - name: "preferredOffLevel"
+    title: "Preferred Dim Level on Turn-Off (%)"
+    description: "Pre-stages brightness silently when turned OFF by the card Power-Off schedule so the next turn-on starts here without turning the lights back on (0 = keep current level, 1-100 = preferred %)."
+    required: true
+    preferenceType: number
+    definition:
+      minimum: 0
+      maximum: 100
+      default: 0

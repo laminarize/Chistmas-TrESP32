@@ -346,6 +346,7 @@ static void effects_task(void *pvParameters)
 
         bool square_high = (twinkle_phase < 0.5f);
         float twinkle_a = square_high ? 1.0f : TWINKLE_DIM_FACTOR;
+        float twinkle_b = square_high ? TWINKLE_DIM_FACTOR : 1.0f;
 
         // Handle Demo Mode cycling every 15 seconds (750 ticks at 50Hz)
         tree_mode_t effective_mode = mode;
@@ -362,27 +363,46 @@ static void effects_task(void *pvParameters)
         float sin_val = (sinf(angle) + 1.0f) * 0.5f; // 0.0 to 1.0
         float gamma_val = sin_val * sin_val;         // Natural breathing curve
 
-        // NOTE: This tree uses unidirectional +29V smart-IC strings (Polarity A / IN1 only).
-        // Reversing polarity (-29V on IN2 / duty_b) turns the entire tree off until the stock
-        // TS-48W29V forward-polarity pulse-code (PLC) packets are captured and added.
-        // Keep all active modes mapped onto Polarity A (Warm White) with duty_b = 0 for now.
         switch (effective_mode) {
             case TREE_MODE_STEADY_WARM_WHITE:
-            case TREE_MODE_STEADY_MULTICOLOR:
-            case TREE_MODE_STEADY_DUAL:
                 tree_driver_set_duties(scale_duty(1.0f, brightness), 0);
                 break;
 
+            case TREE_MODE_STEADY_MULTICOLOR:
+                tree_driver_set_duties(0, scale_duty(1.0f, brightness));
+                break;
+
+            case TREE_MODE_STEADY_DUAL:
+                tree_driver_set_duties(scale_duty(1.0f, brightness), scale_duty(1.0f, brightness));
+                break;
+
             case TREE_MODE_FADE_WARM_WHITE:
-            case TREE_MODE_FADE_MULTICOLOR:
-            case TREE_MODE_FADE_ALTERNATING:
                 tree_driver_set_duties(scale_duty(gamma_val, brightness), 0);
                 break;
 
+            case TREE_MODE_FADE_MULTICOLOR:
+                tree_driver_set_duties(0, scale_duty(gamma_val, brightness));
+                break;
+
+            case TREE_MODE_FADE_ALTERNATING: {
+                float fade_a = sin_val;
+                float fade_b = 1.0f - sin_val;
+                tree_driver_set_duties(scale_duty(fade_a * fade_a, brightness),
+                                       scale_duty(fade_b * fade_b, brightness));
+                break;
+            }
+
             case TREE_MODE_TWINKLE_WARM_WHITE:
-            case TREE_MODE_TWINKLE_MULTICOLOR:
-            case TREE_MODE_TWINKLE_ALTERNATING:
                 tree_driver_set_duties(scale_duty(twinkle_a, brightness), 0);
+                break;
+
+            case TREE_MODE_TWINKLE_MULTICOLOR:
+                tree_driver_set_duties(0, scale_duty(twinkle_a, brightness));
+                break;
+
+            case TREE_MODE_TWINKLE_ALTERNATING:
+                tree_driver_set_duties(scale_duty(twinkle_a, brightness),
+                                       scale_duty(twinkle_b, brightness));
                 break;
 
             default:

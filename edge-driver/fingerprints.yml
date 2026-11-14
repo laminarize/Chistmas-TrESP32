@@ -1,0 +1,18 @@
+matterManufacturer:
+  - id: "PixelPawStudio/ChristmasTrESP32"
+    deviceLabel: Christmas TrESP32
+    vendorId: 0xFFF1
+    productId: 0x8000
+    deviceProfileName: christmas-tresp32
+
+matterGeneric:
+  - id: "matter/christmas-tresp32-ct"
+    deviceLabel: Christmas TrESP32
+    deviceTypes:
+      - id: 0x010C
+    deviceProfileName: christmas-tresp32
+  - id: "matter/christmas-tresp32-ext"
+    deviceLabel: Christmas TrESP32
+    deviceTypes:
+      - id: 0x010D
+    deviceProfileName: christmas-tresp32
